@@ -1,0 +1,4 @@
+[General]
+symbol = "btc"
+access_wait_time_seconds = 60
+notify_wait_time_seconds = 5
