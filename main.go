@@ -27,6 +27,7 @@ type Config struct {
 type GeneralConfig struct {
 	Symbol                string `toml:"symbol"`
 	LineToken             string `toml:"line_token"`
+	SlackWebhookURL       string `toml:"slack_webhook_url"`
 	AccessWaitTimeSeconds int    `toml:"access_wait_time_seconds"`
 	NotifyWaitTimeSeconds int    `toml:"notify_wait_time_seconds"`
 }
@@ -108,6 +109,33 @@ func PostToLine(tickerCode string, token string) error {
 	return nil
 }
 
+func PostToSlack(message string, webhookURL string) error {
+	values := url.Values{}
+	values.Add("payload", "{'text':'<!channel> "+message+"'")
+
+	req, err := http.NewRequest(
+		"POST",
+		webhookURL,
+		strings.NewReader(values.Encode()),
+	)
+	if err != nil {
+		return err
+	}
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return errors.New(resp.Status)
+	}
+	return nil
+}
+
 func main() {
 	logger := LogInit()
 	config, err := LoadConfig()
@@ -117,6 +145,7 @@ func main() {
 
 	symbol := strings.ToUpper(config.General.Symbol)
 	lineToken := config.General.LineToken
+	slackWebhookURL := config.General.SlackWebhookURL
 	notifyAccessTimeSeconds := time.Duration(config.General.AccessWaitTimeSeconds)
 	notifyWaitTimeSeconds := time.Duration(config.General.NotifyWaitTimeSeconds)
 	message := "https://www.coinexchange.io/market/" + symbol + "/BTC"
@@ -132,9 +161,17 @@ func main() {
 		}
 	}
 
-	if err := PostToLine(message, lineToken); err != nil {
+	go func() {
+		if err := PostToLine(message, lineToken); err != nil {
+			logger.Error(err.Error())
+		}
+	}()
+
+	go func(){
+	if err := PostToSlack(message, slackWebhookURL); err != nil {
 		logger.Error(err.Error())
 	}
+	}()
 
 	for {
 		if err := beeep.Notify(ApplicationName, message, ""); err != nil {
