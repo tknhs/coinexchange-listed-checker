@@ -1,4 +1,5 @@
 [General]
-symbol = "btc"
+symbol = "eth"
+line_token = ""
 access_wait_time_seconds = 60
 notify_wait_time_seconds = 5

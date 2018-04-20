@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -20,15 +23,15 @@ type GetCurrency struct {
 type Config struct {
 	General GeneralConfig `toml:"General"`
 }
+
 type GeneralConfig struct {
 	Symbol                string `toml:"symbol"`
+	LineToken             string `toml:"line_token"`
 	AccessWaitTimeSeconds int    `toml:"access_wait_time_seconds"`
 	NotifyWaitTimeSeconds int    `toml:"notify_wait_time_seconds"`
 }
 
 const ApplicationName = "CoinExchange.io - Listed Checker"
-
-var Logger = LogInit()
 
 func LogInit() *logrus.Logger {
 	logger := logrus.New()
@@ -55,52 +58,87 @@ func LoadConfig() (*Config, error) {
 	return c, nil
 }
 
-func IsListed(tickerCode string) (isListed bool) {
-	isListed = false
+func IsListed(tickerCode string) (bool, error) {
+	success := false
 
 	resp, err := http.Get("https://www.coinexchange.io/api/v1/getcurrency?ticker_code=" + tickerCode)
 	if err != nil {
-		Logger.Error(err.Error())
-		return
+		return success, err
 	}
 	defer resp.Body.Close()
 
 	var getCurrency GetCurrency
 	if body, err := ioutil.ReadAll(resp.Body); err != nil {
-		Logger.Error(err.Error())
-		return
+		return success, err
 	} else {
 		if err = json.Unmarshal(body, &getCurrency); err != nil {
-			Logger.Error(err.Error())
-			return
+			return success, err
 		}
 	}
 
-	isListed = getCurrency.Success == "1"
-	return
+	success = getCurrency.Success == "1"
+	return success, err
+}
+
+func PostToLine(tickerCode string, token string) error {
+	values := url.Values{}
+	values.Add("message", tickerCode)
+
+	req, err := http.NewRequest(
+		"POST",
+		"https://notify-api.line.me/api/notify",
+		strings.NewReader(values.Encode()),
+	)
+	if err != nil {
+		return err
+	}
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Add("Authorization", "Bearer "+token)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return errors.New(resp.Status)
+	}
+	return nil
 }
 
 func main() {
+	logger := LogInit()
 	config, err := LoadConfig()
 	if err != nil {
-		Logger.Error(err.Error())
+		logger.Error(err.Error())
 	}
 
-	symbol := config.General.Symbol
+	symbol := strings.ToUpper(config.General.Symbol)
+	lineToken := config.General.LineToken
 	notifyAccessTimeSeconds := time.Duration(config.General.AccessWaitTimeSeconds)
 	notifyWaitTimeSeconds := time.Duration(config.General.NotifyWaitTimeSeconds)
+	message := "https://www.coinexchange.io/market/" + symbol + "/BTC"
 
 	isListed := false
 	for !isListed {
-		isListed = IsListed(symbol)
+		isListed, err = IsListed(symbol)
+		if err != nil {
+			logger.Error(err.Error())
+		}
 		if !isListed {
 			time.Sleep(notifyAccessTimeSeconds * time.Second)
 		}
 	}
 
+	if err := PostToLine(message, lineToken); err != nil {
+		logger.Error(err.Error())
+	}
+
 	for {
-		if err := beeep.Notify(ApplicationName, "Listed: "+symbol, ""); err != nil {
-			Logger.Error(err.Error())
+		if err := beeep.Notify(ApplicationName, message, ""); err != nil {
+			logger.Error(err.Error())
 		}
 		time.Sleep(notifyWaitTimeSeconds * time.Second)
 	}
