@@ -111,7 +111,7 @@ func PostToLine(tickerCode string, token string) error {
 
 func PostToSlack(message string, webhookURL string) error {
 	values := url.Values{}
-	values.Add("payload", "{'text':'<!channel> "+message+"'")
+	values.Add("payload", "{'text':'<!channel> "+message+"'}")
 
 	req, err := http.NewRequest(
 		"POST",
